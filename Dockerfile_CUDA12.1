@@ -1,0 +1,39 @@
+FROM nvidia/cuda:12.1.1-cudnn8-runtime-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/usr/local/cuda/bin:${PATH}"
+ENV LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}"
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    python3.10 \
+    python3.10-venv \
+    python3-pip \
+    git \
+    wget \
+    curl \
+    libhdf5-serial-dev \
+    hdf5-tools \
+    build-essential \
+    software-properties-common \
+    && ln -sf /usr/bin/python3.10 /usr/bin/python \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Upgrade pip/setuptools
+RUN python3 -m pip install --upgrade pip setuptools wheel
+
+# Latest stable PyTorch + CUDA 12.1
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+# RUN pip install -e .
+# RUN pip install -e . --root-user-action=ignore
+CMD ["bash"]
+
