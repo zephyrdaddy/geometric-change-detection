@@ -5,6 +5,7 @@ import argparse
 from typing import List
 import h5py
 import numpy as np
+import glob
 
 from data_generators.dataset import ChangeDetectionDataset
 

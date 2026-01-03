@@ -74,18 +74,29 @@ class ChangeDetectionDataset(Dataset):
     # ------------------------------------------------------------------
     # Core generation
     # ------------------------------------------------------------------
+    # def _make_base_scene(self) -> Scene:
+    #     """Create a base scene with a few fixed shapes."""
+    #     scene = Scene()
+    #     # Horizontal line
+    #     scene.add_shape('line', {'start': np.array([-5.0, 0.0]), 'end': np.array([5.0, 0.0])}, 150)
+    #     # Rectangle
+    #     scene.add_shape('rect', {'center': np.array([0.0, 3.0]), 'size': (2.0, 1.5)}, 120)
+    #     # Circle
+    #     scene.add_shape('circle', {'center': np.array([3.0, -2.0]), 'radius': 1.2}, 150)
+    #     # Another line
+    #     scene.add_shape('line', {'start': np.array([-2.0, -4.0]), 'end': np.array([2.0, -4.0])}, 100)
+    #     return scene
+
     def _make_base_scene(self) -> Scene:
-        """Create a base scene with a few fixed shapes."""
+        """Create a completely random base scene."""
+        from .scene_library import create_random_scene
+        
         scene = Scene()
-        # Horizontal line
-        scene.add_shape('line', {'start': np.array([-5.0, 0.0]), 'end': np.array([5.0, 0.0])}, 150)
-        # Rectangle
-        scene.add_shape('rect', {'center': np.array([0.0, 3.0]), 'size': (2.0, 1.5)}, 120)
-        # Circle
-        scene.add_shape('circle', {'center': np.array([3.0, -2.0]), 'radius': 1.2}, 150)
-        # Another line
-        scene.add_shape('line', {'start': np.array([-2.0, -4.0]), 'end': np.array([2.0, -4.0])}, 100)
+        shapes = create_random_scene()
+        for shape_def in shapes:
+            scene.add_shape(shape_def['shape_type'], shape_def['params'], shape_def['n_points'])
         return scene
+
 
     def _generate_one(self) -> Dict[str, torch.Tensor]:
         """Generate one synthetic (P, Q) pair and labels."""
