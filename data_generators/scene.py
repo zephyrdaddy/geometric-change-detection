@@ -44,8 +44,60 @@ class Scene:
         
         elif change_type == 'partial_remove':
             # Reduce points to simulate partial occlusion/removal
-            remove_ratio = np.random.uniform(0.2, 0.6)
-            mutated['n_points'] = int(shape['n_points'] * (1 - remove_ratio))
+            remove_ratio = np.random.uniform(0.25, 0.65)
+    
+            if shape['shape_type'] == 'circle':
+                # Remove ARC by restricting angle range in sample_circle
+                center = np.array(shape['params']['center'])
+                radius = shape['params']['radius']
+                arc_start = np.random.uniform(0, 2*np.pi)
+                arc_length = (1 - remove_ratio) * 2 * np.pi  # KEEP arc length
+                mutated['params'].update({
+                    'arc_start': arc_start,
+                    'arc_end': arc_start + arc_length
+                })
+                mutated['n_points'] = int(shape['n_points'] * (1 - remove_ratio) * 1.2)  # density adjust
+                
+            elif shape['shape_type'] == 'rect':
+                # Remove ENTIRE side(s) - modify corners directly
+                w, h = shape['params']['size']
+                center = np.array(shape['params']['center'])
+                corners = np.array([
+                    [-w/2, -h/2], [w/2, -h/2], [w/2, h/2], [-w/2, h/2]
+                ]) + center
+                
+                # Randomly remove 1-2 continuous sides
+                n_remove_sides = np.random.randint(1, 3)
+                start_side = np.random.randint(0, 4)
+                remove_sides = [(start_side + i) % 4 for i in range(n_remove_sides)]
+                
+                # Rebuild remaining sides only
+                remaining_sides = [i for i in range(4) if i not in remove_sides]
+                side_pts = int(shape['n_points'] / len(remaining_sides))
+                mutated['params'] = {'remaining_corners': corners[remaining_sides].tolist()}
+                mutated['n_points'] = side_pts * len(remaining_sides)
+                
+            elif shape['shape_type'] == 'line':
+                # Remove MIDDLE SEGMENT - split into two shorter lines
+                total_len = np.linalg.norm(np.array(shape['params']['end']) - np.array(shape['params']['start']))
+                gap_start_rel = np.random.uniform(0.2, 0.5)
+                gap_end_rel = gap_start_rel + remove_ratio * 0.6  # shorter gap
+                
+                start = np.array(shape['params']['start'])
+                end = np.array(shape['params']['end'])
+                direction = (end - start) / total_len
+                
+                seg1_end = start + gap_start_rel * total_len * direction
+                seg2_start = start + gap_end_rel * total_len * direction
+                
+                # Store as TWO line segments (gap in middle)
+                mutated['params'] = {
+                    'seg1_start': start.tolist(),
+                    'seg1_end': seg1_end.tolist(),
+                    'seg2_start': seg2_start.tolist(), 
+                    'seg2_end': end.tolist()
+                }
+                mutated['n_points'] = int(shape['n_points'] * (1 - remove_ratio))
         
         return mutated
 
@@ -57,32 +109,51 @@ class Scene:
             'n_points': n_points,
             'label': len(self.shapes)  # Unique ID for change tracking
         })
-    
-    def sample_points(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Sample all points from scene shapes."""
+        
+    def sample_points(self) -> np.ndarray:
         all_points = []
         for shape in self.shapes:
+            params = shape['params']
+            
             if shape['shape_type'] == 'line':
-                pts = sample_line(
-                    shape['params']['start'], 
-                    shape['params']['end'], 
-                    shape['n_points']
-                )
+                if 'seg1_start' in params:
+                    pts = sample_line(
+                        np.asarray(params['seg1_start']),
+                        np.asarray(params['seg1_end']),
+                        shape['n_points']//2,
+                        seg2_start=np.asarray(params['seg2_start']),
+                        seg2_end=np.asarray(params['seg2_end'])
+                    )
+                else:
+                    pts = sample_line(
+                        np.asarray(params['start']), 
+                        np.asarray(params['end']), 
+                        shape['n_points']
+                    )
             elif shape['shape_type'] == 'rect':
-                pts = sample_rectangle(
-                    shape['params']['center'],
-                    shape['params']['size'],
-                    shape['n_points']
-                )
+                if 'remaining_corners' in params:
+                    pts = sample_rectangle(
+                        np.zeros(2), (0,0), shape['n_points'],
+                        remaining_corners=[np.asarray(c) for c in params['remaining_corners']]
+                    )
+                else:
+                    pts = sample_rectangle(
+                        np.asarray(params['center']),
+                        params['size'],
+                        shape['n_points']
+                    )
             elif shape['shape_type'] == 'circle':
+                arc_start = params.get('arc_start')
+                arc_end = params.get('arc_end')
                 pts = sample_circle(
-                    shape['params']['center'],
-                    shape['params']['radius'],
-                    shape['n_points']
+                    np.asarray(params['center']),
+                    float(params['radius']),
+                    shape['n_points'],
+                    arc_start=arc_start, arc_end=arc_end
                 )
             all_points.append(pts)
         return np.vstack(all_points) if all_points else np.empty((0, 2))
-            
+
     def apply_change(self, change_prob: float = 0.3) -> 'Scene':
         """Create modified scene: mutate existing + add/remove shapes."""
         new_scene = Scene(self.bounds)

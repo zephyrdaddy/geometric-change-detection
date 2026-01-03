@@ -223,34 +223,91 @@ class ChangeDetectionDataset(Dataset):
         d_min = np.sqrt(np.min(dist2, axis=1))    # [N]
         return d_min.astype(np.float32)
 
-    def _sample_shape_points(self, shape_def: Dict) -> np.ndarray:
-        """Sample dense points from a shape definition (for change mask)."""
-        from .shapes import sample_line, sample_rectangle, sample_circle
 
+    def _sample_shape_points(self, shape_def: Dict) -> np.ndarray:
+        """Sample dense points from shape (handles partial removal params)."""
+        from .shapes import sample_line, sample_rectangle, sample_circle
+        
         n = max(80, shape_def.get('n_points', 80))
+        params = shape_def['params']
+        
         if shape_def['shape_type'] == 'line':
-            return sample_line(
-                np.asarray(shape_def['params']['start'], dtype=np.float32),
-                np.asarray(shape_def['params']['end'], dtype=np.float32),
-                n_points=n,
-                noise_std=0.0,
-            )
+            if 'seg1_start' in params:  # partial remove: sample both segments
+                pts1 = sample_line(
+                    np.asarray(params['seg1_start']),
+                    np.asarray(params['seg1_end']),
+                    n//2, noise_std=0.0
+                )
+                pts2 = sample_line(
+                    np.asarray(params['seg2_start']),
+                    np.asarray(params['seg2_end']),
+                    n//2, noise_std=0.0
+                )
+                return np.vstack([pts1, pts2])
+            else:
+                return sample_line(
+                    np.asarray(params['start']),
+                    np.asarray(params['end']),
+                    n, noise_std=0.0
+                )
+                
         elif shape_def['shape_type'] == 'rect':
-            return sample_rectangle(
-                np.asarray(shape_def['params']['center'], dtype=np.float32),
-                shape_def['params']['size'],
-                n_points=n,
-                noise_std=0.0,
-            )
+            if 'remaining_corners' in params:
+                # Partial rect: sample remaining sides
+                corners = [np.asarray(c) for c in params['remaining_corners']]
+                side_pts = n // len(corners)
+                pts = []
+                for i in range(len(corners)):
+                    side_pts_ = sample_line(corners[i], corners[(i+1)%len(corners)], side_pts, 0.0)
+                    pts.append(side_pts_)
+                return np.vstack(pts)
+            else:
+                return sample_rectangle(
+                    np.asarray(params['center']),
+                    params['size'],
+                    n, noise_std=0.0
+                )
+                
         elif shape_def['shape_type'] == 'circle':
+            arc_start = params.get('arc_start')
+            arc_end = params.get('arc_end')
             return sample_circle(
-                np.asarray(shape_def['params']['center'], dtype=np.float32),
-                float(shape_def['params']['radius']),
-                n_points=n,
-                noise_std=0.0,
+                np.asarray(params['center']),
+                float(params['radius']),
+                n, noise_std=0.0,
+                arc_start=arc_start, arc_end=arc_end
             )
         else:
-            return np.zeros((0, 2), dtype=np.float32)
+            return np.empty((0, 2), dtype=np.float32)
+
+    # def _sample_shape_points(self, shape_def: Dict) -> np.ndarray:
+    #     """Sample dense points from a shape definition (for change mask)."""
+    #     from .shapes import sample_line, sample_rectangle, sample_circle
+
+    #     n = max(80, shape_def.get('n_points', 80))
+    #     if shape_def['shape_type'] == 'line':
+    #         return sample_line(
+    #             np.asarray(shape_def['params']['start'], dtype=np.float32),
+    #             np.asarray(shape_def['params']['end'], dtype=np.float32),
+    #             n_points=n,
+    #             noise_std=0.0,
+    #         )
+    #     elif shape_def['shape_type'] == 'rect':
+    #         return sample_rectangle(
+    #             np.asarray(shape_def['params']['center'], dtype=np.float32),
+    #             shape_def['params']['size'],
+    #             n_points=n,
+    #             noise_std=0.0,
+    #         )
+    #     elif shape_def['shape_type'] == 'circle':
+    #         return sample_circle(
+    #             np.asarray(shape_def['params']['center'], dtype=np.float32),
+    #             float(shape_def['params']['radius']),
+    #             n_points=n,
+    #             noise_std=0.0,
+    #         )
+    #     else:
+    #         return np.zeros((0, 2), dtype=np.float32)
 
     def _pad_points(self, pts: np.ndarray, max_n: int) -> Tuple[np.ndarray, np.ndarray]:
         """Pad points to max_n with sentinel value and create mask."""
