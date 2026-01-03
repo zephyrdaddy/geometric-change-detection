@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y \
     git \
     wget \
     curl \
+    vim \
     libhdf5-serial-dev \
     hdf5-tools \
     build-essential \
@@ -21,6 +22,8 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
+ENV PYTHONPATH=/app
+
 
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
