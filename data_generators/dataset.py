@@ -217,21 +217,21 @@ class ChangeDetectionDataset(Dataset):
         from .shapes import sample_line, sample_rectangle, sample_circle
 
         n = max(80, shape_def.get('n_points', 80))
-        if shape_def['type'] == 'line':
+        if shape_def['shape_type'] == 'line':
             return sample_line(
                 np.asarray(shape_def['params']['start'], dtype=np.float32),
                 np.asarray(shape_def['params']['end'], dtype=np.float32),
                 n_points=n,
                 noise_std=0.0,
             )
-        elif shape_def['type'] == 'rect':
+        elif shape_def['shape_type'] == 'rect':
             return sample_rectangle(
                 np.asarray(shape_def['params']['center'], dtype=np.float32),
                 shape_def['params']['size'],
                 n_points=n,
                 noise_std=0.0,
             )
-        elif shape_def['type'] == 'circle':
+        elif shape_def['shape_type'] == 'circle':
             return sample_circle(
                 np.asarray(shape_def['params']['center'], dtype=np.float32),
                 float(shape_def['params']['radius']),
