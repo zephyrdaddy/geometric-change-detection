@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Dict
 
 def load_sample(h5_file: str, sample_idx: int = 0) -> Dict | None:
+    """Load a sample from HDF5 file."""
     with h5py.File(h5_file, 'r') as f:
         grp_name = f"sample_{sample_idx}"
         if grp_name not in f:
@@ -14,97 +15,93 @@ def load_sample(h5_file: str, sample_idx: int = 0) -> Dict | None:
         return {
             'P': np.array(grp['P']),
             'Q': np.array(grp['Q']),
-            'mask_p': np.array(grp['mask_p']),
-            'mask_q': np.array(grp['mask_q']),
             'change_p': np.array(grp['change_p']),
             'change_q': np.array(grp['change_q']),
-            'y_global': np.array(grp['y_global']),
+            # optional: if you have global label
+            'y_global': np.array(grp.get('y_global', 0)),
         }
 
 def plot_sample(sample, out_path: str, title: str = ""):
-    fig = plt.figure(figsize=(20, 5))
-    
-    mask_p = sample['mask_p'] > 0.5
-    mask_q = sample['mask_q'] > 0.5
-    
-    P_valid = sample['P'][mask_p]
-    Q_valid = sample['Q'][mask_q]
-    change_p = sample['change_p'][mask_p]
-    change_q = sample['change_q'][mask_q]
-    
-    # 1. P: Unchanged (gray) vs Changed (red)
+    P = sample['P']
+    Q = sample['Q']
+    change_p = sample['change_p']
+    change_q = sample['change_q']
+
+    fig = plt.figure(figsize=(24, 6))
+
+    # Colors
+    UNCHANGED_COLOR = '#A0A0AF'  # darker gray for visibility
+    CHANGED_COLOR_P = '#D32F2F'  # bright red
+    CHANGED_COLOR_Q = '#F57C00'  # bright orange
+    CHANGED_EDGE = 'black'
+
+    # --- 1. P points ---
     ax1 = plt.subplot(1, 4, 1)
-    unchanged_p = P_valid[change_p < 0.5]
-    changed_p = P_valid[change_p > 0.5]
-    ax1.scatter(unchanged_p[:, 0], unchanged_p[:, 1], c='lightgray', s=20, alpha=0.7, label='Unchanged')
-    if len(changed_p) > 0:
-        ax1.scatter(changed_p[:, 0], changed_p[:, 1], c='red', s=25, alpha=0.9, edgecolors='darkred', linewidth=0.5, label='Changed')
-    ax1.set_title(f'P\n({np.mean(change_p):.0%} changed pts)')
-    ax1.grid(True, alpha=0.3)
-    ax1.legend(frameon=True, fontsize=8)
-    ax1.set_aspect('equal')
-    
-    # 2. Q: Unchanged (gray) vs Changed (orange)
+    ax1.set_facecolor('white')
+    ax1.scatter(P[change_p < 0.5, 0], P[change_p < 0.5, 1], c=UNCHANGED_COLOR, s=12, alpha=0.9)
+    ax1.scatter(P[change_p > 0.5, 0], P[change_p > 0.5, 1], c=CHANGED_COLOR_P, s=100,
+                edgecolors=CHANGED_EDGE, linewidth=1.5, alpha=1.0)
+    ax1.set_title(f"P: {np.mean(change_p):.0%} CHANGED\n({len(P)} pts)", fontsize=12, fontweight='bold')
+    ax1.set_aspect('equal'); ax1.grid(True, alpha=0.2)
+
+    # --- 2. Q points ---
     ax2 = plt.subplot(1, 4, 2)
-    unchanged_q = Q_valid[change_q < 0.5]
-    changed_q = Q_valid[change_q > 0.5]
-    ax2.scatter(unchanged_q[:, 0], unchanged_q[:, 1], c='lightgray', s=20, alpha=0.7, label='Unchanged')
-    if len(changed_q) > 0:
-        ax2.scatter(changed_q[:, 0], changed_q[:, 1], c='orange', s=25, alpha=0.9, edgecolors='darkorange', linewidth=0.5, label='Changed')
-    ax2.set_title(f'Q\n({np.mean(change_q):.0%} changed pts)')
-    ax2.grid(True, alpha=0.3)
-    ax2.legend(frameon=True, fontsize=8)
-    ax2.set_aspect('equal')
-    
-    # 3. Overlay: P(blue/gray) vs Q(red/orange)
+    ax2.set_facecolor('white')
+    ax2.scatter(Q[change_q < 0.5, 0], Q[change_q < 0.5, 1], c=UNCHANGED_COLOR, s=12, alpha=0.9)
+    ax2.scatter(Q[change_q > 0.5, 0], Q[change_q > 0.5, 1], c=CHANGED_COLOR_Q, s=100,
+                edgecolors=CHANGED_EDGE, linewidth=1.5, alpha=1.0)
+    ax2.set_title(f"Q: {np.mean(change_q):.0%} CHANGED\n({len(Q)} pts)", fontsize=12, fontweight='bold')
+    ax2.set_aspect('equal'); ax2.grid(True, alpha=0.2)
+
+    # --- 3. Overlay changed points only ---
     ax3 = plt.subplot(1, 4, 3)
-    ax3.scatter(unchanged_p[:, 0], unchanged_p[:, 1], c='blue', s=12, alpha=0.6, label='P unchanged')
-    ax3.scatter(changed_p[:, 0], changed_p[:, 1], c='darkblue', s=18, alpha=0.9, label='P changed', edgecolors='navy')
-    ax3.scatter(unchanged_q[:, 0], unchanged_q[:, 1], c='red', s=12, alpha=0.6, label='Q unchanged')
-    ax3.scatter(changed_q[:, 0], changed_q[:, 1], c='darkorange', s=18, alpha=0.9, label='Q changed', edgecolors='darkred')
-    status = "CHANGED" if sample["y_global"] > 0.5 else "NO CHANGE"
-    ax3.set_title(f'P vs Q Overlay\nGlobal: {status}')
-    ax3.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize=8)
-    ax3.grid(True, alpha=0.3)
-    ax3.set_aspect('equal')
-    
-    # 4. Change heatmap (difference visualization)
-    ax4 = plt.subplot(1, 4, 4)
-    all_pts = np.vstack([P_valid, Q_valid])
-    all_changes = np.concatenate([change_p, change_q])
-    sc = ax4.scatter(all_pts[:, 0], all_pts[:, 1], c=all_changes, 
-                     cmap='RdYlBu_r', s=15, alpha=0.8)
-    ax4.set_title('Change Confidence Heatmap')
-    plt.colorbar(sc, ax=ax4, label='Change Score')
-    ax4.grid(True, alpha=0.3)
-    ax4.set_aspect('equal')
-    
+    ax3.set_facecolor('#FAFAFA')
+    ax3.scatter(P[change_p < 0.5, 0], P[change_p < 0.5, 1], c='lightblue', s=8, alpha=0.5)
+    ax3.scatter(Q[change_q < 0.5, 0], Q[change_q < 0.5, 1], c='lightcoral', s=8, alpha=0.5)
+    ax3.scatter(P[change_p > 0.5, 0], P[change_p > 0.5, 1], c=CHANGED_COLOR_P, s=80, alpha=1.0,
+                edgecolors=CHANGED_EDGE, linewidth=1.2)
+    ax3.scatter(Q[change_q > 0.5, 0], Q[change_q > 0.5, 1], c=CHANGED_COLOR_Q, s=80, alpha=1.0,
+                edgecolors=CHANGED_EDGE, linewidth=1.2)
+    ax3.set_aspect('equal'); ax3.grid(True, alpha=0.3)
+    ax3.set_title('Changes Only', fontsize=12, fontweight='bold')
+
+    # --- 5. Stats ---
+    ax5 = plt.subplot(1, 4, 4)
+    ax5.axis('off')
+    stats_text = f'''
+📊 CHANGE STATS
+P changed: {np.mean(change_p):.1%} ({len(P)} pts)
+Q changed: {np.mean(change_q):.1%} ({len(Q)} pts)
+Total changed: {(change_p.sum() + change_q.sum()):.0f} pts
+'''
+    ax5.text(0.1, 0.95, stats_text, transform=ax5.transAxes, fontsize=11,
+             verticalalignment='top', fontfamily='monospace',
+             bbox=dict(boxstyle='round,pad=0.5', facecolor='lightyellow', alpha=0.9))
+    ax5.set_title('Summary', fontsize=12, fontweight='bold')
+
     if title:
-        fig.suptitle(title, fontsize=14, y=0.98)
-    
+        fig.suptitle(title, fontsize=16, fontweight='bold', y=0.98)
+
     plt.tight_layout()
-    plt.savefig(out_path, dpi=150, bbox_inches='tight')
+    plt.savefig(out_path, dpi=200, bbox_inches='tight', facecolor='white')
     plt.close(fig)
-    print(f"💾 Saved: {out_path} ({np.mean(change_p+change_q)/2:.1%} avg change)")
-
-
-
+    print(f"💾 {out_path} | P:{np.mean(change_p):.0%} Q:{np.mean(change_q):.0%}")
 
 if __name__ == '__main__':
-    # Directory with your HDF5 files
     data_dir = Path('data/generated')
     h5_files = sorted(data_dir.glob('*.h5'))
     if not h5_files:
         print(f"No .h5 files found in {data_dir}")
         raise SystemExit
 
-    # How many files and samples per file to visualize
-    max_files = 3      # first 3 files
-    samples_per_file = 100  # first 3 samples in each
+    max_files = 3
+    samples_per_file = 100
 
     for fi, h5_file in enumerate(h5_files[:max_files]):
         print(f"\n=== File {fi}: {h5_file.name} ===")
-        for si in range(samples_per_file):
+        with h5py.File(h5_file, 'r') as f:
+            n_samples = len(f.keys())
+        for si in range(min(samples_per_file, n_samples)):
             sample = load_sample(str(h5_file), si)
             if sample is None:
                 continue
