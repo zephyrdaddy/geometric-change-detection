@@ -1,5 +1,6 @@
 # scene.py
 import numpy as np
+import copy
 from typing import Dict, List, Tuple
 from .shapes import (
     sample_line_ordered,
@@ -21,21 +22,26 @@ class Scene:
         })
 
     def mutate_shape(self, shape: Dict) -> Dict:
-
-        new = dict(shape)
+        # Deep copy the entire shape so nothing is shared
+        new = copy.deepcopy(shape)
         new["changed"] = True
-        p = new["params"].copy()
 
-        if shape["type"] == "line":
-            offset = np.random.normal(0, 0.5, 2)
-            p["start"] += offset
-            p["end"] += offset
+        def sample_offset(min_mag=0.5, scale=0.5):
+            """Sample a 2D offset with minimum magnitude."""
+            while True:
+                offset = np.random.normal(0, scale, 2)
+                if np.linalg.norm(offset) >= min_mag:
+                    return offset
 
-        elif shape["type"] in ("rect", "circle"):
-            offset = np.random.normal(0, 0.5, 2)
-            p["center"] += offset
+        if new["type"] == "line":
+            offset = sample_offset(min_mag=0.5, scale=1.0)
+            new["params"]["start"] += offset
+            new["params"]["end"] += offset
 
-        new["params"] = p
+        elif new["type"] in ("rect", "circle"):
+            offset = sample_offset(min_mag=0.5, scale=1.0)
+            new["params"]["center"] += offset
+
         return new
 
     def apply_change(self) -> "Scene":

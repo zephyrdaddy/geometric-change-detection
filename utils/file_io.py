@@ -49,6 +49,7 @@ def generate_hdf5_dataset(
 
         with h5py.File(filename, "w") as f:
             for i in range(n_this_batch):
+                print("Generate ", i)
                 sample = dataset[i]
                 grp = f.create_group(f"sample_{i}")
 
@@ -59,6 +60,7 @@ def generate_hdf5_dataset(
 
                 grp.attrs["n_points_p"] = sample["P"].shape[0]
                 grp.attrs["n_points_q"] = sample["Q"].shape[0]
+                print("")
 
         print(f"  Saved: {filename}")
 
