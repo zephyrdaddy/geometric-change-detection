@@ -1,217 +1,295 @@
-# train.py
+# train_bidirectional.py
 
 import os
-import argparse
-from typing import Dict
+from pathlib import Path
+import h5py
 import numpy as np
 
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
+from torch.utils.data import Dataset, DataLoader
 
-from data_generators.dataset import ChangeDetectionDataset
-from models.pointnet_mlp import PointNetMLP
+from models.changenet_mlp import ChangeNet
+# ===============================================
+# Dataset
+# ===============================================
+class H5ChangeDataset(Dataset):
+    """HDF5 dataset for bidirectional point cloud change detection."""
+    def __init__(self, data_dir=None, files=None):
+        if files is None:
+            self.files = sorted(Path(data_dir).glob("*.h5"))
+        else:
+            self.files = files
+
+        self.samples = []
+        for f in self.files:
+            with h5py.File(f, "r") as h5f:
+                self.samples += [(f, k) for k in h5f.keys()]
+    # def __init__(self, h5_files):
+    #     self.samples = []
+    #     for f in h5_files:
+    #         with h5py.File(f, "r") as hf:
+    #             for k in hf.keys():
+    #                 self.samples.append((str(f), k))
+
+    # def __init__(self, data_dir: str):
+    #     self.files = sorted(Path(data_dir).glob("*.h5"))
+    #     self.samples = []
+    #     for f in self.files:
+    #         with h5py.File(f, "r") as h5f:
+    #             self.samples += [(f, i) for i in range(len(h5f.keys()))]
+
+    def __len__(self):
+        return len(self.samples)
+        
+    def __getitem__(self, idx):
+        f, key = self.samples[idx]   # key is already "sample_XXX"
+        with h5py.File(f, "r") as h5f:
+            grp = h5f[key]
+
+            P = np.array(grp["P"], dtype=np.float32)
+            Q = np.array(grp["Q"], dtype=np.float32)
+            change_p = np.array(grp["change_p"], dtype=np.float32)
+            change_q = np.array(grp["change_q"], dtype=np.float32)
+
+        return {
+            "P": torch.from_numpy(P),
+            "Q": torch.from_numpy(Q),
+            "change_p": torch.from_numpy(change_p),
+            "change_q": torch.from_numpy(change_q),
+        }
 
 
-def train_epoch(model: nn.Module, loader: DataLoader, optimizer: optim.Optimizer, 
-                criterion: nn.Module, device: torch.device, epoch: int) -> Dict[str, float]:
-    """Single training epoch."""
+    # def __getitem__(self, idx):
+    #     f, si = self.samples[idx]
+    #     with h5py.File(f, "r") as h5f:
+    #         grp = h5f[f"sample_{si}"]
+    #         P = np.array(grp["P"], dtype=np.float32)
+    #         Q = np.array(grp["Q"], dtype=np.float32)
+    #         change_p = np.array(grp["change_p"], dtype=np.float32)
+    #         change_q = np.array(grp["change_q"], dtype=np.float32)
+
+    #     return {
+    #         "P": torch.from_numpy(P),        # [n_p, 2]
+    #         "Q": torch.from_numpy(Q),        # [n_q, 2]
+    #         "change_p": torch.from_numpy(change_p),  # [n_p]
+    #         "change_q": torch.from_numpy(change_q),  # [n_q]
+    #     }
+
+
+# def collate_fn(batch):
+#     """
+#     batch: list of samples, each is {'P': [n_p,2], 'Q':[n_q,2], 'change_p':[n_p], 'change_q':[n_q]}
+#     Returns padded tensors and masks
+#     """
+#     P_list = [torch.tensor(s['P'], dtype=torch.float32) for s in batch]
+#     Q_list = [torch.tensor(s['Q'], dtype=torch.float32) for s in batch]
+#     change_p_list = [torch.tensor(s['change_p'], dtype=torch.float32) for s in batch]
+#     change_q_list = [torch.tensor(s['change_q'], dtype=torch.float32) for s in batch]
+
+#     # Pad P
+#     max_n_p = max([p.shape[0] for p in P_list])
+#     P_padded = torch.zeros(len(P_list), max_n_p, 2)
+#     mask_p = torch.zeros(len(P_list), max_n_p)
+#     change_p_padded = torch.zeros(len(P_list), max_n_p)
+#     for i, (p, c) in enumerate(zip(P_list, change_p_list)):
+#         n = p.shape[0]
+#         P_padded[i, :n] = p
+#         mask_p[i, :n] = 1
+#         change_p_padded[i, :n] = c
+
+#     # Pad Q
+#     max_n_q = max([q.shape[0] for q in Q_list])
+#     Q_padded = torch.zeros(len(Q_list), max_n_q, 2)
+#     mask_q = torch.zeros(len(Q_list), max_n_q)
+#     change_q_padded = torch.zeros(len(Q_list), max_n_q)
+#     for i, (q, c) in enumerate(zip(Q_list, change_q_list)):
+#         n = q.shape[0]
+#         Q_padded[i, :n] = q
+#         mask_q[i, :n] = 1
+#         change_q_padded[i, :n] = c
+
+#     return {
+#         'P': P_padded,
+#         'Q': Q_padded,
+#         'mask_p': mask_p,
+#         'mask_q': mask_q,
+#         'change_p': change_p_padded,
+#         'change_q': change_q_padded,
+#     }
+
+
+
+def collate_fn(batch):
+    """
+    batch: list of samples, each is {'P': [n_p,2], 'Q':[n_q,2], 'change_p':[n_p], 'change_q':[n_q]}
+    Returns:
+        P: [B, max_n_p, 2]
+        Q: [B, max_n_q, 2]
+        mask_p: [B, max_n_p]
+        mask_q: [B, max_n_q]
+        change_p: [B, max_n_p]
+        change_q: [B, max_n_q]
+    """
+    P_list = [torch.tensor(s['P'], dtype=torch.float32) for s in batch]
+    Q_list = [torch.tensor(s['Q'], dtype=torch.float32) for s in batch]
+    change_p_list = [torch.tensor(s['change_p'], dtype=torch.float32) for s in batch]
+    change_q_list = [torch.tensor(s['change_q'], dtype=torch.float32) for s in batch]
+
+    # Pad P
+    max_n_p = max([p.shape[0] for p in P_list])
+    B = len(batch)
+    P_padded = torch.zeros(B, max_n_p, 2)
+    mask_p = torch.zeros(B, max_n_p)
+    change_p_padded = torch.zeros(B, max_n_p)
+    for i, (p, c) in enumerate(zip(P_list, change_p_list)):
+        n = p.shape[0]
+        P_padded[i, :n] = p
+        mask_p[i, :n] = 1
+        change_p_padded[i, :n] = c
+
+    # Pad Q
+    max_n_q = max([q.shape[0] for q in Q_list])
+    Q_padded = torch.zeros(B, max_n_q, 2)
+    mask_q = torch.zeros(B, max_n_q)
+    change_q_padded = torch.zeros(B, max_n_q)
+    for i, (q, c) in enumerate(zip(Q_list, change_q_list)):
+        n = q.shape[0]
+        Q_padded[i, :n] = q
+        mask_q[i, :n] = 1
+        change_q_padded[i, :n] = c
+
+    return {
+        'P': P_padded,
+        'Q': Q_padded,
+        'mask_p': mask_p,
+        'mask_q': mask_q,
+        'change_p': change_p_padded,
+        'change_q': change_q_padded,
+    }
+
+# def collate_fn(batch):
+#     """Batch variable-length point clouds as lists."""
+#     P = [b["P"] for b in batch]
+#     Q = [b["Q"] for b in batch]
+#     change_p = [b["change_p"] for b in batch]
+#     change_q = [b["change_q"] for b in batch]
+#     return {"P": P, "Q": Q, "change_p": change_p, "change_q": change_q}
+
+
+
+
+# ===============================================
+# Training
+# ===============================================
+def train_one_epoch(model, loader, optimizer, device):
     model.train()
     total_loss = 0.0
-    total_acc_p = 0.0
-    total_acc_q = 0.0
-    n_samples = 0
 
-    for batch_idx, batch in enumerate(loader):
-        # Data to device
-        P = batch['P'].to(device)
-        Q = batch['Q'].to(device)
-        mask_p = batch['mask_p'].to(device)
-        mask_q = batch['mask_q'].to(device)
-        change_p_gt = batch['change_p'].to(device)
-        change_q_gt = batch['change_q'].to(device)
-        y_global_gt = batch['y_global'].squeeze().to(device)
+    for batch in loader:
+        # Move everything to device
+        P = batch["P"].to(device)
+        Q = batch["Q"].to(device)
+        mask_p = batch["mask_p"].to(device)
+        mask_q = batch["mask_q"].to(device)
+        target_p = batch["change_p"].to(device)
+        target_q = batch["change_q"].to(device)
 
         optimizer.zero_grad()
 
-        # Forward pass
-        change_p_pred, change_q_pred, y_global_pred = model(P, Q, mask_p, mask_q)
+        # Pass masks to the model for correct global pooling
+        pred_q_logits, pred_p_logits = model(P, Q, mask_p=mask_p, mask_q=mask_q)
 
-        # Losses: per-point + global
-        loss_p = criterion(change_p_pred, change_p_gt)
-        loss_q = criterion(change_q_pred, change_q_gt)
-        loss_global = nn.functional.binary_cross_entropy_with_logits(y_global_pred, y_global_gt)
-        loss = loss_p + loss_q + 0.1 * loss_global  # weighted combination
+        # Calculate loss with reduction='none' so we can mask it manually
+        loss_q = F.binary_cross_entropy_with_logits(pred_q_logits, target_q, reduction='none')
+        loss_p = F.binary_cross_entropy_with_logits(pred_p_logits, target_p, reduction='none')
+
+        # Apply masks: zeros out the loss for padding points
+        masked_loss_q = (loss_q * mask_q).sum() / mask_q.sum()
+        masked_loss_p = (loss_p * mask_p).sum() / mask_p.sum()
+
+        loss = masked_loss_q + masked_loss_p
 
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
+        total_loss += loss.item()
 
-        total_loss += loss.item() * P.size(0)
-        total_acc_p += ((change_p_pred > 0) == (change_p_gt > 0.5)).float().mean().item() * P.size(0)
-        total_acc_q += ((change_q_pred > 0) == (change_q_gt > 0.5)).float().mean().item() * P.size(0)
-        n_samples += P.size(0)
-
-        if batch_idx % 50 == 0:
-            print(f'Epoch {epoch}, Batch {batch_idx}/{len(loader)}: '
-                  f'Loss={loss.item():.4f}, AccP={total_acc_p/n_samples:.3f}')
-
-    metrics = {
-        'loss': total_loss / n_samples,
-        'acc_p': total_acc_p / n_samples,
-        'acc_q': total_acc_q / n_samples,
-    }
-    return metrics
-
+    return total_loss / len(loader)
 
 @torch.no_grad()
-def validate_epoch(model: nn.Module, loader: DataLoader, criterion: nn.Module, 
-                   device: torch.device) -> Dict[str, float]:
-    """Validation epoch."""
+def validate_one_epoch(model, loader, device):
     model.eval()
     total_loss = 0.0
-    total_acc_p = 0.0
-    total_acc_q = 0.0
-    n_samples = 0
 
     for batch in loader:
-        P = batch['P'].to(device)
-        Q = batch['Q'].to(device)
-        mask_p = batch['mask_p'].to(device)
-        mask_q = batch['mask_q'].to(device)
-        change_p_gt = batch['change_p'].to(device)
-        change_q_gt = batch['change_q'].to(device)
+        P = batch["P"].to(device)
+        Q = batch["Q"].to(device)
+        target_p = batch["change_p"].to(device)
+        target_q = batch["change_q"].to(device)
+        mask_p = batch["mask_p"].to(device)
+        mask_q = batch["mask_q"].to(device)
 
-        change_p_pred, change_q_pred, _ = model(P, Q, mask_p, mask_q)
+        pred_q, pred_p = model(P, Q)
 
-        loss_p = criterion(change_p_pred, change_p_gt)
-        loss_q = criterion(change_q_pred, change_q_gt)
-        loss = (loss_p + loss_q) / 2
-
-        total_loss += loss.item() * P.size(0)
-        total_acc_p += ((change_p_pred > 0) == (change_p_gt > 0.5)).float().mean().item() * P.size(0)
-        total_acc_q += ((change_q_pred > 0) == (change_q_gt > 0.5)).float().mean().item() * P.size(0)
-        n_samples += P.size(0)
-
-    metrics = {
-        'loss': total_loss / n_samples,
-        'acc_p': total_acc_p / n_samples,
-        'acc_q': total_acc_q / n_samples,
-    }
-    return metrics
-
-
-def main(args):
-    # Setup
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f'Using device: {device}')
-
-    # Data
-    train_dataset = ChangeDetectionDataset(
-        size=args.n_train,
-        mode=args.data_mode,
-        data_dir=args.data_dir,
-        n_points_per_cloud=args.n_points,
-    )
-    val_dataset = ChangeDetectionDataset(
-        size=args.n_val,
-        mode='generate',  # always fresh validation
-        n_points_per_cloud=args.n_points,
-    )
-
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, 
-                             shuffle=True, num_workers=args.num_workers, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, 
-                           shuffle=False, num_workers=args.num_workers, pin_memory=True)
-
-    print(f'Train: {len(train_dataset)} samples, Val: {len(val_dataset)} samples')
-
-    # Model
-    model = PointNetMLP(in_dim=4, hidden_dim=128, out_dim=1).to(device)  # xyz + cloud_id
-
-    # Optimizer + scheduler
-    optimizer = optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    criterion = nn.BCEWithLogitsLoss(reduction='mean')
-
-    # Logging
-    os.makedirs(args.output_dir, exist_ok=True)
-    writer = SummaryWriter(log_dir=os.path.join(args.output_dir, 'tb_logs'))
-    
-    best_val_acc = 0.0
-    for epoch in range(args.epochs):
-        print(f'\n=== Epoch {epoch+1}/{args.epochs} ===')
+        loss_q = F.binary_cross_entropy_with_logits(pred_q, target_q, reduction='none')
+        loss_p = F.binary_cross_entropy_with_logits(pred_p, target_p, reduction='none')
         
-        # Train
-        train_metrics = train_epoch(model, train_loader, optimizer, criterion, device, epoch)
-        scheduler.step()
-        
-        # Validate
-        val_metrics = validate_epoch(model, val_loader, criterion, device)
-        
-        # Log
-        for k, v in train_metrics.items():
-            writer.add_scalar(f'train/{k}', v, epoch)
-        for k, v in val_metrics.items():
-            writer.add_scalar(f'val/{k}', v, epoch)
-        writer.add_scalar('lr', optimizer.param_groups[0]['lr'], epoch)
-        
-        print(f'Train: Loss={train_metrics["loss"]:.4f}, AccP={train_metrics["acc_p"]:.3f}, '
-              f'AccQ={train_metrics["acc_q"]:.3f}')
-        print(f'Val:   Loss={val_metrics["loss"]:.4f}, AccP={val_metrics["acc_p"]:.3f}, '
-              f'AccQ={val_metrics["acc_q"]:.3f}')
-        
-        # Save best model
-        mean_val_acc = (val_metrics['acc_p'] + val_metrics['acc_q']) / 2
-        if mean_val_acc > best_val_acc:
-            best_val_acc = mean_val_acc
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'metrics': val_metrics,
-            }, os.path.join(args.output_dir, 'best_model.pth'))
-            print(f'New best model saved! Val Acc: {mean_val_acc:.3f}')
-            # 🔥 ADD VISUALIZATION HERE 🔥
-            try:
-                from utils.viz import plot_predictions
-                viz_dir = os.path.join(args.output_dir, 'viz_best')
-                plot_predictions(os.path.join(args.output_dir, 'best_model.pth'), 
-                            test_samples=3, save_dir=viz_dir)
-                print(f'  → Generated prediction visualizations in {viz_dir}')
-            except ImportError:
-                print('  → Visualization skipped (utils/viz.py not found)')
-            except Exception as e:
-                print(f'  → Visualization failed: {e}')
-        # Save checkpoint every 10 epochs
-        if (epoch + 1) % 10 == 0:
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-            }, os.path.join(args.output_dir, f'checkpoint_epoch_{epoch+1}.pth'))
+        loss = ((loss_q * mask_q).sum() / mask_q.sum()) + ((loss_p * mask_p).sum() / mask_p.sum())
+        total_loss += loss.item()
 
-    writer.close()
-    print(f'\nTraining complete! Best val acc: {best_val_acc:.3f}')
-    print(f'Checkpoints saved to: {args.output_dir}')
-    print(f'TensorBoard: tensorboard --logdir={args.output_dir}/tb_logs')
+    return total_loss / len(loader)
 
 
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Train 2D Point Cloud Change Detection')
-    parser.add_argument('--n_train', type=int, default=10000, help='train samples')
-    parser.add_argument('--n_val', type=int, default=2000, help='val samples')
-    parser.add_argument('--batch_size', type=int, default=64, help='batch size')
-    parser.add_argument('--n_points', type=int, default=512, help='points per cloud')
-    parser.add_argument('--epochs', type=int, default=100, help='number of epochs')
-    parser.add_argument('--lr', type=float, default=1e-3, help='learning rate')
-    parser.add_argument('--data_mode', choices=['generate', 'load', 'mixed'], default='mixed',
-                        help='data loading mode')
-    parser.add_argument('--data_dir', type=str, default='data/generated', help='HDF5 data directory')
-    parser.add_argument('--output_dir', type=str, default='outputs', help='output directory')
-    parser.add_argument('--num_workers', type=int, default=4, help='DataLoader workers')
+# ===============================================
+# Main
+# ===============================================
+def main():
+    import argparse
+    import random
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--data_dir', type=str, default='data/generated', help='Folder with HDF5 files')
+    parser.add_argument('--epochs', type=int, default=50)
+    parser.add_argument('--batch_size', type=int, default=8)
     args = parser.parse_args()
 
-    main(args)
+    data_dir = args.data_dir
+    n_epochs = args.epochs
+    batch_size = args.batch_size
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    all_files = sorted(Path(data_dir).glob("*.h5"))
+    random.shuffle(all_files)
+
+    split_ratio = 0.8
+    n_train = int(len(all_files) * split_ratio)
+
+    train_files = all_files[:n_train]
+    val_files   = all_files[n_train:]
+
+    train_dataset = H5ChangeDataset(files=train_files)
+    val_dataset = H5ChangeDataset(files=val_files)
+
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=collate_fn)
+    val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, collate_fn=collate_fn)
+
+    model = ChangeNet(in_dim=2, hidden_dim=128).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    best_val_loss = 1e10
+    n_epochs = 50
+    for epoch in range(n_epochs):
+        train_loss = train_one_epoch(model, train_loader, optimizer, device)
+        val_loss = validate_one_epoch(model, val_loader, device)
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(model.state_dict(), "best_change_model.pth")
+            print(f"⭐ New best model saved at epoch {epoch+1}")
+        print(f"Epoch {epoch+1}/{n_epochs} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
+
+    # Save model
+    # torch.save(model.state_dict(), "best_change_model.pth")
+    # print("Model saved as best_change_model.pth")
+
+
+if __name__ == "__main__":
+    main()
