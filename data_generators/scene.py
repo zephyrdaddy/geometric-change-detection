@@ -48,7 +48,7 @@ class Scene:
         new_scene = Scene()
 
         for shp in self.shapes:
-            action = np.random.choice(["keep", "mutate", "remove"], p=[0.6, 0.25, 0.15])
+            action = np.random.choice(["keep", "mutate", "remove"], p=[0.7, 0.2, 0.10])
 
             if action == "keep":
                 new_scene.shapes.append(dict(shp))

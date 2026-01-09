@@ -13,30 +13,39 @@ class ChangeDetectionDataset(Dataset):
 
     def _make_scene(self) -> Scene:
         s = Scene()
-        for _ in range(np.random.randint(1,4)):
-            t = np.random.choice(["line","rect","circle"])
+        # Random number of shapes, now more shapes per scene
+        n_shapes = np.random.randint(3, 8)  # 3 to 7 shapes
+        for _ in range(n_shapes):
+            t = np.random.choice(["line", "rect", "circle"])
             if t == "line":
                 s.add_shape(
                     "line",
-                    {"start": np.random.uniform(-5,5,2),
-                     "end": np.random.uniform(-5,5,2)},
-                    80,
+                    {
+                        "start": np.random.uniform(-10, 10, 2),  # wider range
+                        "end": np.random.uniform(-10, 10, 2)
+                    },
+                    n_points=np.random.randint(50, 120)  # vary points per line
                 )
             elif t == "rect":
                 s.add_shape(
                     "rect",
-                    {"center": np.random.uniform(-5,5,2),
-                     "size": (np.random.uniform(1,3), np.random.uniform(1,3))},
-                    120,
+                    {
+                        "center": np.random.uniform(-10, 10, 2),
+                        "size": (np.random.uniform(1, 5), np.random.uniform(1, 5))  # bigger rects
+                    },
+                    n_points=np.random.randint(80, 150)
                 )
-            else:
+            else:  # circle
                 s.add_shape(
                     "circle",
-                    {"center": np.random.uniform(-5,5,2),
-                     "radius": np.random.uniform(0.5,2)},
-                    100,
+                    {
+                        "center": np.random.uniform(-10, 10, 2),
+                        "radius": np.random.uniform(0.5, 3)  # bigger circles
+                    },
+                    n_points=np.random.randint(60, 130)
                 )
         return s
+
 
     def _generate_one(self):
         scene_p = self._make_scene()
