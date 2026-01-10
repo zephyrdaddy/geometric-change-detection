@@ -3,8 +3,7 @@ import lightning as L
 from omegaconf import DictConfig
 from lightning.pytorch.callbacks import ModelCheckpoint
 
-# HYDRA_CONFIG_DIR=""
-@hydra.main(version_base="1.3", config_path="../configs", config_name="config")
+@hydra.main(version_base="1.3", config_path="../../configs", config_name="config")
 def main(cfg: DictConfig):
     # Instantiate using Hydra
     datamodule = hydra.utils.instantiate(cfg.data)
