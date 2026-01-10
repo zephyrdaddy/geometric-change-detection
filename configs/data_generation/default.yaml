@@ -1,0 +1,6 @@
+n_samples: 10000
+output_dir: ${hydra:runtime.cwd}/data/generated
+batch_size: 1000
+n_points: 512
+noise_std: 0.05
+overwrite: false

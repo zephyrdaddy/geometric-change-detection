@@ -1,0 +1,13 @@
+defaults:
+  - _self_
+  - data: geometric_h5
+  - model: changenet
+  - trainer: default
+
+# Global parameters
+seed: 42
+experiment_name: "geometric_change_detection_v1"
+
+# You can also override specific values from the sub-configs here
+trainer:
+  epochs: 100  # Overwrites whatever is in trainer/default.yaml
