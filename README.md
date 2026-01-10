@@ -240,3 +240,6 @@ python train.py --data_dir data/generated --epochs 100 --batch_size 16
 
 
 the mask vector is to pad the pointcloud of different lengths.
+
+
+When to use it: Once your code is stable and you want to run a "sweep" (e.g., testing 5 different model designs or 3 different geometric change thresholds).

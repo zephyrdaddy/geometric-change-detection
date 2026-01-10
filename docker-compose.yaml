@@ -1,0 +1,18 @@
+services:
+  dev:
+    build: .
+    image: geometric-dev:latest
+    volumes:
+      - .:/app              # Syncs your code changes instantly
+    environment:
+      - PYTHONPATH=/app     # Essential so "import src" works
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    stdin_open: true        # Keeps container open
+    tty: true               # Allows terminal interaction
+    command: /bin/bash
