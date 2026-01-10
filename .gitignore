@@ -16,3 +16,5 @@ __pycache__/
 
 /src/data/generated/
 /src/outputs/
+
+/src/lightning_logs
