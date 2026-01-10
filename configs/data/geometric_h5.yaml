@@ -1,0 +1,3 @@
+_target_: src.data.datamodule.GeometricDataModule
+data_dir: "data/generated"
+batch_size: 8

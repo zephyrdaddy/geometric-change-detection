@@ -1,0 +1,16 @@
+# configs/trainer/default.yaml
+_target_: lightning.Trainer
+
+# Basic Training Params
+max_epochs: 50
+accelerator: "auto" # Automatically detects CUDA/MPS/CPU
+devices: 1          # Number of GPUs/CPUs to use
+log_every_n_steps: 10
+deterministic: True # Helps reproducibility
+
+# Debugging/Safety
+fast_dev_run: False # Set to True for a quick 1-batch test run
+precision: 32       # Use 16-mixed for faster training on newer GPUs
+
+# Validation
+check_val_every_n_epoch: 1
