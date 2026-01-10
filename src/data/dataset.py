@@ -2,7 +2,7 @@
 import numpy as np
 import torch
 from torch.utils.data import Dataset
-from .scene import Scene
+from src.generation.scene import Scene
 
 class ChangeDetectionDataset(Dataset):
     def __init__(self, size=10000, n_points=512, noise_std=0.03):
