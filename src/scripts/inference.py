@@ -1,39 +1,50 @@
+import hydra
 import torch
 import h5py
 import numpy as np
-from pathlib import Path
-from models.changenet_mlp import ChangeNet # Adjust path as needed
+from omegaconf import DictConfig
+from src.models.system import ChangeDetectionSystem
 
-def run_inference(model_path, input_h5, output_h5, device='cuda'):
-    # 1. Load Model
-    device = torch.device(device if torch.cuda.is_available() else 'cpu')
-    model = ChangeNet(in_dim=2, hidden_dim=128).to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
+@hydra.main(version_base="1.3", config_path="../configs", config_name="inference")
+def main(cfg: DictConfig):
+    # 1. Load Model from Lightning Checkpoint
+    # This automatically restores hyperparameters and architecture
+    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    
+    # Use the class method to load the weights
+    model = ChangeDetectionSystem.load_from_checkpoint(
+        checkpoint_path=hydra.utils.to_absolute_path(cfg.model_ckpt)
+    ).to(device)
     model.eval()
 
-    with h5py.File(input_h5, 'r') as fin, h5py.File(output_h5, 'w') as fout:
+    input_path = hydra.utils.to_absolute_path(cfg.input_h5)
+    output_path = hydra.utils.to_absolute_path(cfg.output_h5)
+
+    with h5py.File(input_path, 'r') as fin, h5py.File(output_path, 'w') as fout:
         for key in fin.keys():
-            # Load data
             grp = fin[key]
-            P = torch.from_numpy(np.array(grp['P'])).float().unsqueeze(0).to(device) # [1, n_p, 2]
-            Q = torch.from_numpy(np.array(grp['Q'])).float().unsqueeze(0).to(device) # [1, n_q, 2]
+            # Convert to Tensors and add Batch Dim
+            P = torch.from_numpy(np.array(grp['P'])).float().unsqueeze(0).to(device)
+            Q = torch.from_numpy(np.array(grp['Q'])).float().unsqueeze(0).to(device)
             
-            # Forward pass
+            # Forward pass (LightningModule forward usually calls the internal model)
             with torch.no_grad():
-                logits_q, logits_p = model(P, Q)
+                # We assume ChangeDetectionSystem.forward returns (logits_q, logits_p)
+                # Ensure your model handles the dummy mask input if your forward requires it
+                logits_q, logits_p = model(P, Q, mask_p=None, mask_q=None)
+                
                 pred_p = torch.sigmoid(logits_p).cpu().numpy().squeeze()
                 pred_q = torch.sigmoid(logits_q).cpu().numpy().squeeze()
 
-            # Save to new file
+            # Save results
             out_grp = fout.create_group(key)
-            out_grp.create_dataset('P', data=grp['P'])
-            out_grp.create_dataset('Q', data=grp['Q'])
-            out_grp.create_dataset('change_p', data=grp['change_p'])
-            out_grp.create_dataset('change_q', data=grp['change_q'])
+            for dset in ['P', 'Q', 'change_p', 'change_q']:
+                out_grp.create_dataset(dset, data=grp[dset])
+            
             out_grp.create_dataset('change_p_pred', data=pred_p)
             out_grp.create_dataset('change_q_pred', data=pred_q)
 
-    print(f"✅ Inference complete. Results saved to {output_h5}")
+    print(f"✅ Inference complete. Results saved to: {output_path}")
 
 if __name__ == "__main__":
-    run_inference("best_change_model.pth", "data/generated/change_dataset_batch_0009.h5", "results.h5")
+    main()
